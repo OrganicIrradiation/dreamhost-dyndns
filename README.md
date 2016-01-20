@@ -31,14 +31,14 @@ optional arguments:
 License
 -----------------
 
-All code, unless specified, is licensed under GPLv3. Copyright 2013 [Víctor Terrón][1].
+All code, unless specified, is licensed under GPLv3. Copyright 2013 [Alex][1].
 
 ```
-Dreampylib is (c) 2009 by [Laurens Simonis][2] and updated in 2014 by [Eli Ribble][3].
+Dreampylib is (c) 2009 by [Laurens Simonis][2] and was updated in 2014 by [Eli Ribble][3].
 ```
 
 Thanks to random internetter for url and regex in `getip.py`
 
-[1]: https://github.com/vterron/dreamhost-dyndns
+[1]: https://github.com/thismachinechills/dreamhost-dyndns
 [2]: http://dreampylib.laurenssimonis.com/
 [3]: https://github.com/EliRibble/dreampylib
