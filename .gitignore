@@ -1,0 +1,7 @@
+private_domains.csv
+.ipynb_checkpoints/
+*.ipynb
+*.pyc
+*.html
+*.p
+setup_notes.md

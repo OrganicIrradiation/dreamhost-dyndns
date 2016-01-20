@@ -23,15 +23,15 @@ def _connect_api(server, key):
         exit()
 
 
-def update_ip(server, key, ipaddr, connection=None):
+def update_ip(server, key, ipaddr, fuzzy=None, connection=None):
+    if fuzzy is None:
+        fuzzy = False
+
     if connection is None:
         connection = _connect_api(server, key)
     else:
         server = connection._user
         key = connection._key
-
-    if ipaddr is None:
-        ipaddr = getip.get_external_ip()
 
     LOGGER.info("Server: {}, Key: {}, IP: {}".format(server, key, ipaddr))
     
@@ -43,9 +43,13 @@ def update_ip(server, key, ipaddr, connection=None):
 
     retcodes = list()
     for record in result[2]:
-        if record['record'] == str(server) and record['type'] == 'A':
+        if fuzzy:
+            server_found = (server in record['record'])
+        else:
+            server_found = (server == record['record'])
+        if server_found and record['type'] == 'A':
             value = record['value']
-            LOGGER.info('\'A\' record for {} found. Current IP: {}'.format(server, value))
+            LOGGER.info('\'A\' record for {} found. Current IP: {}'.format(record['record'], value))
 
             if value == str(ipaddr):
                 LOGGER.info('Record is up to date with correct IP address.')
@@ -84,7 +88,8 @@ def update_ip(server, key, ipaddr, connection=None):
 @click.option('-s', '--server', type=str, help='Server\'s domain name. Multiple allowed.', multiple=True)
 @click.option('-k', '--key', type=str, help='DreamHost API Key.')
 @click.option('-i', '--ip', default=None, type=str, help='Desired A record value')
-def main(filename, server, key, ip):
+@click.option('--fuzzy', is_flag=True, help='Match all subdomains (e.g., www, ftp, ssh)')
+def main(filename, server, key, ip, fuzzy):
     if not ip:
         ip = getip.get_external_ip()
     LOGGER.info('Using IP: {}'.format(ip))
@@ -95,11 +100,11 @@ def main(filename, server, key, ip):
         with open(filename, 'r') as domain_csv:
             reader = csv.reader(domain_csv, delimiter=',')
             for row in reader:
-                retcode = update_ip(server=row[0], key=row[1], ipaddr=ip)
+                retcode = update_ip(server=row[0], key=row[1], ipaddr=ip, fuzzy=fuzzy)
                 retcodes.append(retcode)
     else:
         for server_id in server:
-            retcode = update_ip(server=server_id, key=key, ipaddr=ip)
+            retcode = update_ip(server=server_id, key=key, ipaddr=ip, fuzzy=fuzzy)
             retcodes.append(retcode)
 
     if any(retcodes):
