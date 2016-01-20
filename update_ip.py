@@ -2,194 +2,118 @@
 
 from __future__ import print_function
 
-import getip
-import dreampylib
+import click
 import csv
+import dreampylib
+import getip
+import logging
 
-# one day, i'll wrap this up in a class.
-## it's been a year, I'll never do it.
-domain_file, delim = 'domains.csv', ','
-to_be_culled = []
 
-def _grab_ip():
-    ipaddr = getip.get_external_ip()
-    return ipaddr
+LOGGER = logging.getLogger('update_ip')
+
 
 def _connect_api(server, key):
-    connection = dreampylib.DreampyLib(server, key)
+    connection = dreampylib.DreampyLib(user=server, key=key)
 
-    print("Connected to DH API: ", connection.IsConnected(), "(", server, ")")
-
-    if connection.IsConnected() is False:
-        print("Unable to connect. Check server name and API key values.")
+    if connection.is_connected():
+        LOGGER.debug("Connected to DreamHost API. Server: {}".format(server))
+        return connection
+    else:
+        LOGGER.error("Unable to connect to DreamHost API. Check server name and API key values.")
         exit()
 
-    return connection
 
-def _to_be_culled(connection, record, value):
-    to_be_culled.append((connection, record, value))
-
-def _check_record(connection, server, ipaddr):
-    records = connection.dns.list_records()
-
-    if not len(records):
-        return True
-
-    for record in records:
-        try:
-            name, value = record['record'], record['value']
-        except TypeError:
-            print(records)
-            return False
-        else:
-            if name == server and value == str(ipaddr):
-                return False
-            if name == server and value != str(ipaddr):
-                _to_be_culled(connection, record, value)
-                return True
-            else:
-                return True
-
-def _check_result(result):
-    successful = len(result) is 0
-    no_such_zone = len(result) is 3 and result[2] == 'no_such_zone'
-    up_to_date = (len(result) is 3 and \
-        result[2] == 'record_already_exists_remove_first')
-
-    if successful:
-        print("Success")
-    elif no_such_zone:
-        print("\nPlease visit your Dreamhost control panel, go to ")
-        print("Manage Domain and add an 'A' record of '0.0.0.0' ")
-        print("and save. Then reload this script.")
-        print("\nThis is an artifact of the DH API. Please email Dreamhost")
-        print("if this is an inconvience (it is).")
-    elif up_to_date:
-        print("'A' record is up to date and points to your IP.")
-    else:
-        print(result)
-
-    print("\n")
-
-def update_ip(server=None, key=None, ipaddr=None, connection=None):
+def update_ip(server, key, ipaddr, connection=None):
     if connection is None:
-        if server is None:
-            server = "yourdomain.com"
-        if key is None:
-            key = "YOURKEYGOESHERE"
         connection = _connect_api(server, key)
     else:
         server = connection._user
         key = connection._key
 
     if ipaddr is None:
-        ipaddr = _grab_ip()
+        ipaddr = getip.get_external_ip()
 
-    print("-> Server: ", server, " Key: ", key, " IP: ", ipaddr)
+    LOGGER.info("Server: {}, Key: {}, IP: {}".format(server, key, ipaddr))
+    
+    result = connection.dns.list_records()
 
-    # Delete any custom A record with a different IP, if any
-    record_up_to_date = False
-    for record in connection.dns.list_records():
+    if not result[0] == True:
+        LOGGER.error('Problem retrieving DNS records')
+        return 1
+
+    retcodes = list()
+    for record in result[2]:
         if record['record'] == str(server) and record['type'] == 'A':
             value = record['value']
-            type_ = record['type']
+            LOGGER.info('\'A\' record for {} found. Current IP: {}'.format(server, value))
 
             if value == str(ipaddr):
-                record_up_to_date = True
+                LOGGER.info('Record is up to date with correct IP address.')
+                retcodes.append(0)
+                continue
 
-            else:
-                msg = "Delete custom DNS record {0} ({1}) = {2}..."
-                print(msg.format(server, type_, value), end='')
-                kwargs = dict(record=str(server), value=value, type=type_)
-                retcode = connection.dns.remove_record(**kwargs)
-                if not retcode:
-                    print('done.')
-                else:
-                    print('ERROR')
+            if record['editable'] != '1':
+                LOGGER.debug('Record is not editable.')
+                retcodes.append(1)
+                continue
 
-    if record_up_to_date:
-        msg = "'A' record is up to date and points to your IP ({0})"
-        print(msg.format(ipaddr))
+            LOGGER.debug('Removing record.')
+            kwargs = dict(record=str(server), value=value, type='A')
+            retcode = connection.dns.remove_record(**kwargs)[0]
+            if not retcode:
+                LOGGER.error('Problem removing record.')
+                retcodes.append(1)
+                continue
+
+            LOGGER.debug('Adding updated record.')
+            kwargs = dict(record=str(server), value=str(ipaddr), type="A")
+            retcode = connection.dns.add_record(**kwargs)[0]
+            if not retcode:
+                LOGGER.error('Problem adding updated record.')
+                retcodes.append(1)
+                continue
+
+            LOGGER.info('Successfully updated {} to {}'.format(server, ipaddr))
+            retcodes.append(0)
+
+    return any(retcodes)
+
+
+@click.command()
+@click.option('-f', '--filename', type=click.Path(exists=True), help='Comma-separated server,key file. If provided, overrides other options.')
+@click.option('-s', '--server', type=str, help='Server\'s domain name. Multiple allowed.', multiple=True)
+@click.option('-k', '--key', type=str, help='DreamHost API Key.')
+@click.option('-i', '--ip', default=None, type=str, help='Desired A record value')
+def main(filename, server, key, ip):
+    if not ip:
+        ip = getip.get_external_ip()
+    LOGGER.info('Using IP: {}'.format(ip))
+
+    retcodes = list()
+    if filename:
+        LOGGER.info('File {} found'.format(filename))
+        with open(filename, 'r') as domain_csv:
+            reader = csv.reader(domain_csv, delimiter=',')
+            for row in reader:
+                retcode = update_ip(server=row[0], key=row[1], ipaddr=ip)
+                retcodes.append(retcode)
     else:
-        kwargs = dict(record=str(server), value=str(ipaddr), type="A")
-        result = connection.dns.add_record(**kwargs)
-        _check_result(result)
+        for server_id in server:
+            retcode = update_ip(server=server_id, key=key, ipaddr=ip)
+            retcodes.append(retcode)
 
-def update_via_csv(csvfile=None):
-    if csvfile is None:
-        csvfile = domain_file
-
-    ipaddr, updateable_servers = _grab_ip(), list()
-
-    with open(csvfile, 'r') as domain_csv:
-        reader = csv.reader(domain_csv, delimiter=delim)
-
-        for row in reader:
-            server, key = row[0], row[1]
-            connection = _connect_api(server, key)
-            updateable = _check_record(connection, server, ipaddr)
-
-            if updateable:
-                updateable_servers.append(connection)
-
-    for connection in updateable_servers:
-        update_ip(connection=connection)
-
-    if to_be_culled:
-        for connect, server, value in to_be_culled:
-            connection.dns.remove_record(record=server, value=value, type='A')
-
-def main():
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Update your DreamHost DNS records.")
-    parser.add_argument(
-                '-f',
-                dest='file',
-                    nargs=1,
-                metavar='FILE',
-                    type=str,
-                    help='Comma-separated server/key file.',
-                default=domain_file  )
-
-    parser.add_argument(
-                '-s',
-                dest='server',
-                nargs=1,
-                metavar='SERVER',
-                type=str,
-                help="Server's domain name"  )
-
-    parser.add_argument(
-                '-k',
-                dest='key',
-                nargs=1,
-                metavar='KEY',
-                type=str,
-                help= "DreamHost API Key"  )
-    parser.add_argument(
-                '-ip',
-                dest='ip',
-                nargs=1,
-                metavar='IP ADDRESS',
-                type=str,
-                help="Desired A record value"  )
-
-    a = parser.parse_args()
-
-    args = a.server, a.key, a.ip
-
-    manual_update =  all(arg is not None for arg in args)
-
-    insufficient_values_passed = any(arg is not None for arg in args)
-
-    if manual_update:
-        update_ip(server=a.server[0], key=a.key[0], ipaddr=a.ip[0])
-    elif insufficient_values_passed:
-        print("Please specify all values: server, key, and IP address")
+    if any(retcodes):
+        # There was an error
+        return 1
     else:
-        update_via_csv(csvfile=a.file)
-
+        # Everything's a-ok
+        return 0
 
 if __name__ == '__main__':
+    LOGGER = logging.getLogger()
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s %(name)-12s %(levelname)-8s %(message)s')
+    handler.setFormatter(formatter)
+    LOGGER.addHandler(handler)
+    LOGGER.setLevel(logging.INFO)
     main()
