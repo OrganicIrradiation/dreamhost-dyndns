@@ -43,13 +43,14 @@ def update_ip(server, key, ipaddr, fuzzy=None, connection=None):
 
     retcodes = list()
     for record in result[2]:
+        server_found = record['record']
         if fuzzy:
-            server_found = (server in record['record'])
+            was_server_found = (server in server_found)
         else:
-            server_found = (server == record['record'])
-        if server_found and record['type'] == 'A':
+            was_server_found = (server == server_found)
+        if was_server_found and record['type'] == 'A':
             value = record['value']
-            LOGGER.info('\'A\' record for {} found. Current IP: {}'.format(record['record'], value))
+            LOGGER.info('\'A\' record for {} found. Current IP: {}'.format(server_found, value))
 
             if value == str(ipaddr):
                 LOGGER.info('Record is up to date with correct IP address.')
@@ -62,7 +63,7 @@ def update_ip(server, key, ipaddr, fuzzy=None, connection=None):
                 continue
 
             LOGGER.debug('Removing record.')
-            kwargs = dict(record=str(server), value=value, type='A')
+            kwargs = dict(record=server_found, value=value, type='A')
             retcode = connection.dns.remove_record(**kwargs)[0]
             if not retcode:
                 LOGGER.error('Problem removing record.')
@@ -70,14 +71,14 @@ def update_ip(server, key, ipaddr, fuzzy=None, connection=None):
                 continue
 
             LOGGER.debug('Adding updated record.')
-            kwargs = dict(record=str(server), value=str(ipaddr), type="A")
+            kwargs = dict(record=server_found, value=str(ipaddr), type="A")
             retcode = connection.dns.add_record(**kwargs)[0]
             if not retcode:
                 LOGGER.error('Problem adding updated record.')
                 retcodes.append(1)
                 continue
 
-            LOGGER.info('Successfully updated {} to {}'.format(server, ipaddr))
+            LOGGER.info('Successfully updated {} to {}'.format(server_found, ipaddr))
             retcodes.append(0)
 
     return any(retcodes)
